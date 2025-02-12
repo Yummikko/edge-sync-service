@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/open-horizon/edge-sync-service/common"
@@ -95,12 +96,11 @@ func startHTTPServer(ipAddress string, registerHandlers bool, swaggerFile string
 			if err != nil {
 				return &common.SetupError{Message: fmt.Sprintf("Failed to setup Unix Socket listening. Error: %s", err)}
 			}
+			oldMask := syscall.Umask(0)
+			defer syscall.Umask(oldMask)
 			listener, err = net.ListenUnix("unix", unixAddress)
 			if err != nil {
 				return &common.SetupError{Message: fmt.Sprintf("Failed to setup Unix Socket listening. Error: %s", err)}
-			}
-			if err := os.Chown(socketFile, os.Getuid(), os.Getgid()); err != nil {
-				return &common.SetupError{Message: fmt.Sprintf("Failed to change ownership of socket file. Error: %s", err)}
 			}
 			if err := os.Chmod(socketFile, 0o770); err != nil {
 				return &common.SetupError{Message: fmt.Sprintf("Failed to setup permission for Unix Socket listening. Error: %s", err)}
