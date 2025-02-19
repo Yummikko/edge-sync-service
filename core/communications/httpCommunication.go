@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ const pingURL = "/spi/v1/ping/"
 const objectRequestURL = "/spi/v1/objects/"
 
 var unauthorizedBytes = []byte("Unauthorized")
+var allowedDomains = []string{"example.com", "api.example.com"}
 
 // HTTP is the struct for the HTTP communications layer
 type HTTP struct {
@@ -53,6 +55,20 @@ type feedbackMessage struct {
 	Code          int
 	RetryInterval int32
 	Reason        string
+}
+
+func isValidDomain(requestURL string) bool {
+	parsedURL, err := url.Parse(requestURL)
+	if err != nil {
+		return false
+	}
+
+	for _, domain := range allowedDomains {
+		if strings.HasSuffix(parsedURL.Hostname(), domain) {
+			return true
+		}
+	}
+	return false
 }
 
 // StartCommunication starts communications
@@ -1845,7 +1861,8 @@ func (communication *HTTP) pushAllData(metaData *common.MetaData) common.SyncSer
 	common.ObjectLocks.RLock(lockIndex)
 	defer common.ObjectLocks.RUnlock(lockIndex)
 
-	url := buildObjectURL(metaData.DestOrgID, metaData.ObjectType, metaData.ObjectID, metaData.InstanceID, metaData.DataID, common.Data)
+	//url := buildObjectURL(metaData.DestOrgID, metaData.ObjectType, metaData.ObjectID, metaData.InstanceID, metaData.DataID, common.Data)
+	urlString := buildObjectURL(metaData.DestOrgID, metaData.ObjectType, metaData.ObjectID, metaData.InstanceID, metaData.DataID, common.Data)
 
 	var dataReader io.Reader
 	var err error
@@ -1859,11 +1876,20 @@ func (communication *HTTP) pushAllData(metaData *common.MetaData) common.SyncSer
 	}
 	defer Store.CloseDataReader(dataReader)
 
-	request, err := http.NewRequest("PUT", url, dataReader)
+	if !isValidDomain(urlString) {
+		return &Error{"Invalid URL: SSRF protection triggered"}
+	}
+
+	parsedURL, err := url.Parse(urlString)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return &Error{"Invalid protocol: Only HTTP and HTTPS are allowed"}
+	}
+
+	request, err := http.NewRequest("PUT", urlString, dataReader)
 	if err != nil {
 		return &Error{"Failed to create HTTP request to upload data. Error: " + err.Error()}
 	}
-	security.AddIdentityToSPIRequest(request, url)
+	security.AddIdentityToSPIRequest(request, urlString)
 	request.Close = true
 
 	response, err := communication.requestWrapper.do(request)
